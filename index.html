@@ -3,111 +3,141 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>ตรวจเข้าทำงานจาก Google Timeline</title>
-  <meta name="description" content="อัปโหลดไฟล์ Google Timeline เพื่อตรวจว่าวันไหนไปทำงาน ตามรัศมี ช่วงเวลา และชั่วโมงขั้นต่ำ" />
+  <title>WorkPulse</title>
+  <meta name="theme-color" content="#8fb8d9" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="top">
-    <div class="wrap">
-      <h1>ตรวจเข้าทำงาน</h1>
-      <p>อัปโหลดไฟล์ Google Timeline แล้วตั้งรัศมี ช่วงเวลา และชั่วโมงขั้นต่ำ ข้อมูลประมวลผลในเครื่องคุณ ไม่ถูกส่งไปเซิร์ฟเวอร์</p>
+  <div class="vignette"></div>
+
+  <div class="app">
+    <header class="topbar glass">
+      <div class="brand">
+        <span class="mark">W</span>
+        <div>
+          <strong>WorkPulse</strong>
+          <em>ปั๊มน้ำมัน · กะเช้า 06–14 · กะบ่าย 14–22</em>
+        </div>
+      </div>
+      <nav class="mobile-tabs" aria-label="สลับแผง">
+        <button type="button" class="tab-btn on" data-pane="setup">ตั้งค่า</button>
+        <button type="button" class="tab-btn" data-pane="board">ปฏิทิน</button>
+      </nav>
+      <div class="top-actions">
+        <button type="button" class="chip-btn" id="helpBtn">วิธีใช้</button>
+        <button type="button" class="chip-btn" id="csv" disabled>CSV</button>
+      </div>
+    </header>
+
+    <div class="stage">
+      <aside class="pane setup glass" id="pane-setup">
+        <div class="drop" id="drop">
+          <input id="file" type="file" accept=".json,application/json" />
+          <b>วางไฟล์ Timeline</b>
+          <small id="fileInfo">JSON จากมือถือ · ประมวลผลในเครื่อง</small>
+        </div>
+
+        <section>
+          <h3>จุดปั๊ม</h3>
+          <div class="row">
+            <input id="search" type="search" placeholder="ค้นหาชื่อปั๊ม" />
+            <button type="button" class="chip-btn" id="searchBtn">ค้น</button>
+          </div>
+          <div class="row">
+            <input id="lat" type="number" step="any" placeholder="ละติจูด" />
+            <input id="lng" type="number" step="any" placeholder="ลองจิจูด" />
+          </div>
+          <label class="range">รัศมีจุดเดียว <b id="radiusLabel">45 ม.</b>
+            <input id="radius" type="range" min="20" max="80" step="5" value="45" />
+          </label>
+          <div id="map"></div>
+          <div class="chips" id="detectedPlaces"></div>
+        </section>
+
+        <section>
+          <h3>กะ</h3>
+          <div class="shifts">
+            <label><input type="radio" name="shift" value="morning" checked /><span>เช้า<br>06:00–14:00</span></label>
+            <label><input type="radio" name="shift" value="evening" /><span>บ่าย<br>14:00–22:00</span></label>
+            <label><input type="radio" name="shift" value="both" /><span>ทั้งวัน<br>06:00–22:00</span></label>
+          </div>
+          <div class="row">
+            <label>เกณฑ์ชม.<input id="minHours" type="number" min="6" step="0.5" value="6" /></label>
+            <label>จาก<input id="dateFrom" type="date" /></label>
+            <label>ถึง<input id="dateTo" type="date" /></label>
+          </div>
+          <div class="days" id="days">
+            <label><input type="checkbox" value="1" checked /><i>จ</i></label>
+            <label><input type="checkbox" value="2" checked /><i>อ</i></label>
+            <label><input type="checkbox" value="3" checked /><i>พ</i></label>
+            <label><input type="checkbox" value="4" checked /><i>พฤ</i></label>
+            <label><input type="checkbox" value="5" checked /><i>ศ</i></label>
+            <label><input type="checkbox" value="6" /><i>ส</i></label>
+            <label><input type="checkbox" value="0" /><i>อา</i></label>
+          </div>
+        </section>
+
+        <div class="footer-actions">
+          <button type="button" class="primary" id="run">ประมวลผล</button>
+          <button type="button" class="chip-btn" id="save">จำค่า</button>
+        </div>
+        <p class="error" id="error" hidden></p>
+      </aside>
+
+      <section class="pane board" id="pane-board">
+        <div class="board-grid">
+          <article class="glass calendar-card">
+            <div class="cal-head">
+              <button type="button" class="icon-btn" id="prevMonth">‹</button>
+              <div>
+                <h2 id="monthTitle">ปฏิทิน</h2>
+                <p id="resultHint">กดวันที่เพื่อดูรายละเอียด</p>
+              </div>
+              <button type="button" class="icon-btn" id="nextMonth">›</button>
+            </div>
+            <div class="metrics">
+              <div><span>มาทำงาน</span><b id="statOk">0</b></div>
+              <div><span>ไม่ครบ 6 ชม.</span><b id="statWarn">0</b></div>
+              <div><span>ไม่พบ</span><b id="statBad">0</b></div>
+              <div><span>อัตรา</span><b id="statRate">—</b></div>
+            </div>
+            <div id="calendar" class="calendar"></div>
+          </article>
+
+          <article class="glass detail-card" id="detailCard">
+            <p class="detail-kicker">รายละเอียดวัน</p>
+            <h2 id="detailTitle">เลือกวันที่บนปฏิทิน</h2>
+            <p class="detail-status" id="detailStatus">ยังไม่มีข้อมูล</p>
+            <div class="detail-grid">
+              <div><span>กะ</span><b id="dShift">—</b></div>
+              <div><span>เข้าโดยประมาณ</span><b id="dIn">—</b></div>
+              <div><span>ออกโดยประมาณ</span><b id="dOut">—</b></div>
+              <div><span>ชั่วโมงที่อยู่</span><b id="dHours">—</b></div>
+            </div>
+            <div class="timeline" id="detailTimeline"></div>
+            <p class="fine" id="detailNote">ระบบนับเฉพาะเวลาที่อยู่ในรัศมีจุดปั๊มระหว่างช่วงกะ และต้องครบ 6 ชั่วโมงจึงถือว่าไปทำงาน</p>
+          </article>
+        </div>
+      </section>
     </div>
-  </header>
+  </div>
 
-  <main class="wrap">
-    <section class="card">
-      <h2>1. ไฟล์ Timeline</h2>
-      <label class="file-btn">
-        <input id="file" type="file" accept=".json,application/json" />
-        <span id="fileLabel">เลือกไฟล์ Timeline.json หรือ location-history.json</span>
-      </label>
-      <p class="hint" id="fileInfo">ยังไม่ได้เลือกไฟล์</p>
-    </section>
-
-    <section class="card">
-      <h2>2. ที่ทำงาน</h2>
-      <div class="grid2">
-        <label>ละติจูด
-          <input id="lat" type="number" step="any" placeholder="13.7563" />
-        </label>
-        <label>ลองจิจูด
-          <input id="lng" type="number" step="any" placeholder="100.5018" />
-        </label>
-      </div>
-      <label>รัศมี (เมตร)
-        <input id="radius" type="number" min="10" step="10" value="120" />
-      </label>
-      <div id="map" aria-label="แผนที่เลือกที่ทำงาน"></div>
-      <p class="hint">แตะหรือคลิกบนแผนที่เพื่อปักหมุดที่ทำงาน หรือใส่พิกัดเอง</p>
-      <div id="detectedPlaces" class="chips"></div>
-    </section>
-
-    <section class="card">
-      <h2>3. เงื่อนไขการนับ</h2>
-      <div class="grid2">
-        <label>เวลาเริ่มนับ
-          <input id="workStart" type="time" value="08:00" />
-        </label>
-        <label>เวลาสิ้นสุดนับ
-          <input id="workEnd" type="time" value="18:00" />
-        </label>
-      </div>
-      <label>ชั่วโมงขั้นต่ำที่ต้องอยู่ จึงนับว่าไปทำงาน
-        <input id="minHours" type="number" min="0" step="0.5" value="4" />
-      </label>
-      <label>ช่วงวันที่เริ่ม
-        <input id="dateFrom" type="date" />
-      </label>
-      <label>ช่วงวันที่สิ้นสุด
-        <input id="dateTo" type="date" />
-      </label>
-      <p class="days-label">วันทำงาน</p>
-      <div class="days" id="days">
-        <label><input type="checkbox" value="1" checked /> จ</label>
-        <label><input type="checkbox" value="2" checked /> อ</label>
-        <label><input type="checkbox" value="3" checked /> พ</label>
-        <label><input type="checkbox" value="4" checked /> พฤ</label>
-        <label><input type="checkbox" value="5" checked /> ศ</label>
-        <label><input type="checkbox" value="6" /> ส</label>
-        <label><input type="checkbox" value="0" /> อา</label>
-      </div>
-      <label class="check">
-        <input id="onlyWorkHours" type="checkbox" checked />
-        นับเฉพาะเวลาที่ทับกับช่วงเวลางาน
-      </label>
-    </section>
-
-    <div class="actions">
-      <button id="run" class="primary" type="button">ประมวลผล</button>
-      <button id="csv" type="button" disabled>ดาวน์โหลด CSV</button>
+  <div class="modal" id="helpModal" hidden>
+    <div class="glass modal-card">
+      <h3>วิธีใช้</h3>
+      <ol>
+        <li>อัปโหลดไฟล์ Timeline จากมือถือทางซ้าย</li>
+        <li>ปักหมุดจุดปั๊มที่ทำงานจริง จุดเดียว รัศมี 20–80 ม.</li>
+        <li>เลือกกะเช้า 06:00–14:00 หรือกะบ่าย 14:00–22:00</li>
+        <li>กดประมวลผล แล้วแตะวันที่บนปฏิทินเพื่อดูรายละเอียด</li>
+      </ol>
+      <button type="button" class="primary" id="closeHelp">ปิด</button>
     </div>
-    <p class="error" id="error" hidden></p>
-
-    <section class="card results" id="results" hidden>
-      <h2>ผลลัพธ์</h2>
-      <div class="stats" id="stats"></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>วันที่</th>
-              <th>สถานะ</th>
-              <th>เข้าโดยประมาณ</th>
-              <th>ออกโดยประมาณ</th>
-              <th>ชั่วโมงที่อยู่</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
-
-  <footer class="wrap foot">
-    ใช้ไฟล์ที่ส่งออกจากมือถือ: Android ที่ Settings → Location → Timeline หรือ iPhone ที่ Google Maps → Settings → Export Timeline data
-  </footer>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>
