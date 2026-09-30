@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ตรวจเข้าทำงานจาก Google Timeline</title>
+  <meta name="description" content="อัปโหลดไฟล์ Google Timeline เพื่อตรวจว่าวันไหนไปทำงาน ตามรัศมี ช่วงเวลา และชั่วโมงขั้นต่ำ" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>ตรวจเข้าทำงาน</h1>
+      <p>อัปโหลดไฟล์ Google Timeline แล้วตั้งรัศมี ช่วงเวลา และชั่วโมงขั้นต่ำ ข้อมูลประมวลผลในเครื่องคุณ ไม่ถูกส่งไปเซิร์ฟเวอร์</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h2>1. ไฟล์ Timeline</h2>
+      <label class="file-btn">
+        <input id="file" type="file" accept=".json,application/json" />
+        <span id="fileLabel">เลือกไฟล์ Timeline.json หรือ location-history.json</span>
+      </label>
+      <p class="hint" id="fileInfo">ยังไม่ได้เลือกไฟล์</p>
+    </section>
+
+    <section class="card">
+      <h2>2. ที่ทำงาน</h2>
+      <div class="grid2">
+        <label>ละติจูด
+          <input id="lat" type="number" step="any" placeholder="13.7563" />
+        </label>
+        <label>ลองจิจูด
+          <input id="lng" type="number" step="any" placeholder="100.5018" />
+        </label>
+      </div>
+      <label>รัศมี (เมตร)
+        <input id="radius" type="number" min="10" step="10" value="120" />
+      </label>
+      <div id="map" aria-label="แผนที่เลือกที่ทำงาน"></div>
+      <p class="hint">แตะหรือคลิกบนแผนที่เพื่อปักหมุดที่ทำงาน หรือใส่พิกัดเอง</p>
+      <div id="detectedPlaces" class="chips"></div>
+    </section>
+
+    <section class="card">
+      <h2>3. เงื่อนไขการนับ</h2>
+      <div class="grid2">
+        <label>เวลาเริ่มนับ
+          <input id="workStart" type="time" value="08:00" />
+        </label>
+        <label>เวลาสิ้นสุดนับ
+          <input id="workEnd" type="time" value="18:00" />
+        </label>
+      </div>
+      <label>ชั่วโมงขั้นต่ำที่ต้องอยู่ จึงนับว่าไปทำงาน
+        <input id="minHours" type="number" min="0" step="0.5" value="4" />
+      </label>
+      <label>ช่วงวันที่เริ่ม
+        <input id="dateFrom" type="date" />
+      </label>
+      <label>ช่วงวันที่สิ้นสุด
+        <input id="dateTo" type="date" />
+      </label>
+      <p class="days-label">วันทำงาน</p>
+      <div class="days" id="days">
+        <label><input type="checkbox" value="1" checked /> จ</label>
+        <label><input type="checkbox" value="2" checked /> อ</label>
+        <label><input type="checkbox" value="3" checked /> พ</label>
+        <label><input type="checkbox" value="4" checked /> พฤ</label>
+        <label><input type="checkbox" value="5" checked /> ศ</label>
+        <label><input type="checkbox" value="6" /> ส</label>
+        <label><input type="checkbox" value="0" /> อา</label>
+      </div>
+      <label class="check">
+        <input id="onlyWorkHours" type="checkbox" checked />
+        นับเฉพาะเวลาที่ทับกับช่วงเวลางาน
+      </label>
+    </section>
+
+    <div class="actions">
+      <button id="run" class="primary" type="button">ประมวลผล</button>
+      <button id="csv" type="button" disabled>ดาวน์โหลด CSV</button>
+    </div>
+    <p class="error" id="error" hidden></p>
+
+    <section class="card results" id="results" hidden>
+      <h2>ผลลัพธ์</h2>
+      <div class="stats" id="stats"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>วันที่</th>
+              <th>สถานะ</th>
+              <th>เข้าโดยประมาณ</th>
+              <th>ออกโดยประมาณ</th>
+              <th>ชั่วโมงที่อยู่</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot">
+    ใช้ไฟล์ที่ส่งออกจากมือถือ: Android ที่ Settings → Location → Timeline หรือ iPhone ที่ Google Maps → Settings → Export Timeline data
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
