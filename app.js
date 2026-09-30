@@ -1,27 +1,43 @@
 const $ = (id) => document.getElementById(id);
-
+const SHIFTS = {
+  morning: { label: "กะเช้า", start: "06:00", end: "14:00" },
+  evening: { label: "กะบ่าย", start: "14:00", end: "22:00" },
+  both: { label: "ทั้งสองกะ", start: "06:00", end: "22:00" },
+};
 const state = {
-  raw: null,
   segments: [],
   results: [],
+  byDay: new Map(),
+  selected: null,
   marker: null,
+  circle: null,
+  month: new Date(),
 };
 
-const map = L.map("map").setView([13.7563, 100.5018], 12);
+const map = L.map("map").setView([13.7563, 100.5018], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap",
 }).addTo(map);
 
+const radiusValue = () => Math.min(80, Math.max(20, Number($("radius").value) || 45));
+const currentShiftKey = () => document.querySelector("input[name=shift]:checked")?.value || "morning";
+
 function setWork(lat, lng, pan = true) {
   $("lat").value = Number(lat).toFixed(6);
   $("lng").value = Number(lng).toFixed(6);
-  if (state.marker) state.marker.setLatLng([lat, lng]);
-  else state.marker = L.marker([lat, lng]).addTo(map);
-  if (pan) map.setView([lat, lng], 16);
+  const ll = [lat, lng];
+  if (state.marker) state.marker.setLatLng(ll);
+  else state.marker = L.marker(ll).addTo(map);
+  if (state.circle) state.circle.setLatLng(ll).setRadius(radiusValue());
+  else state.circle = L.circle(ll, { radius: radiusValue(), color: "#3d7eaf", fillOpacity: 0.18 }).addTo(map);
+  if (pan) map.setView(ll, 18);
 }
 
 map.on("click", (e) => setWork(e.latlng.lat, e.latlng.lng, false));
-
+$("radius").addEventListener("input", () => {
+  $("radiusLabel").textContent = `${radiusValue()} ม.`;
+  if (state.circle) state.circle.setRadius(radiusValue());
+});
 ["lat", "lng"].forEach((id) => {
   $(id).addEventListener("change", () => {
     const lat = parseFloat($("lat").value);
@@ -55,151 +71,114 @@ function haversine(a, b) {
   const R = 6371000;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const s1 = Math.sin(dLat / 2);
-  const s2 = Math.sin(dLng / 2);
-  const n =
-    s1 * s1 +
-    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * s2 * s2;
+  const n = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(n)));
 }
-
-function toDate(value) {
-  if (!value) return null;
-  const d = new Date(value);
+const toDate = (v) => {
+  const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
-}
+};
 
 function extractSegments(data) {
   const out = [];
-  const add = (start, end, loc, label) => {
+  const add = (start, end, loc) => {
     const s = toDate(start);
     const e = toDate(end);
     const p = parseLatLng(loc);
     if (!s || !e || !p) return;
-    out.push({ start: s, end: e, loc: p, label: label || "" });
+    out.push({ start: s, end: e, loc: p });
   };
-
-  const handleVisit = (obj) => {
-    const visit = obj.visit || obj.placeVisit;
-    if (!visit) return;
-    const top = visit.topCandidate || visit.location || {};
-    const loc =
-      top.placeLocation ||
-      top.latLng ||
-      visit.centerLatE7 && { latitudeE7: visit.centerLatE7, longitudeE7: visit.centerLngE7 };
-    add(obj.startTime || visit.startTimestamp || visit.duration?.startTimestamp, obj.endTime || visit.endTimestamp || visit.duration?.endTimestamp, loc, top.semanticType || top.label || "");
-  };
-
-  const handlePath = (obj) => {
-    const path = obj.timelinePath;
-    if (!Array.isArray(path) || !path.length) return;
-    let runStart = null;
-    let last = null;
-    for (const pt of path) {
-      const loc = parseLatLng(pt.point || pt);
-      const t = toDate(pt.time || obj.startTime);
-      if (!loc || !t) continue;
-      if (!runStart) runStart = { t, loc };
-      last = { t, loc };
-    }
-    if (runStart && last) add(runStart.t, last.t, last.loc, "path");
-  };
-
   const walk = (node) => {
     if (!node) return;
-    if (Array.isArray(node)) {
-      node.forEach(walk);
-      return;
-    }
+    if (Array.isArray(node)) return node.forEach(walk);
     if (typeof node !== "object") return;
-    if (node.visit || node.placeVisit || node.timelinePath || node.activitySegment) {
-      handleVisit(node);
-      handlePath(node);
-      const act = node.activitySegment;
-      if (act) {
-        add(act.duration?.startTimestamp || node.startTime, act.duration?.endTimestamp || node.endTime, act.startLocation || act.waypointPath?.waypoints?.[0], "activity");
-      }
+    const visit = node.visit || node.placeVisit;
+    if (visit) {
+      const top = visit.topCandidate || visit.location || {};
+      add(
+        node.startTime || visit.startTimestamp || visit.duration?.startTimestamp,
+        node.endTime || visit.endTimestamp || visit.duration?.endTimestamp,
+        top.placeLocation || top.latLng || (visit.centerLatE7 && { latitudeE7: visit.centerLatE7, longitudeE7: visit.centerLngE7 })
+      );
     }
-    for (const v of Object.values(node)) {
-      if (v && typeof v === "object") walk(v);
+    if (Array.isArray(node.timelinePath) && node.timelinePath.length) {
+      const first = node.timelinePath[0];
+      const last = node.timelinePath[node.timelinePath.length - 1];
+      add(first.time || node.startTime, last.time || node.endTime, last.point || first.point);
     }
+    const act = node.activitySegment;
+    if (act) add(act.duration?.startTimestamp || node.startTime, act.duration?.endTimestamp || node.endTime, act.startLocation);
+    Object.values(node).forEach((v) => typeof v === "object" && v && walk(v));
   };
-
-  if (Array.isArray(data)) walk(data);
-  else walk(data);
+  walk(data);
   return out;
 }
 
-function extractFrequentPlaces(data) {
-  const places = [];
-  const profile = data?.userLocationProfile?.frequentPlaces || [];
-  for (const p of profile) {
-    const loc = parseLatLng(p.placeLocation || p);
-    if (!loc) continue;
-    places.push({ label: p.label || p.semanticType || "สถานที่ที่ไปบ่อย", loc });
-  }
-  return places;
+function extractPlaces(data) {
+  return (data?.userLocationProfile?.frequentPlaces || [])
+    .map((p) => ({ label: p.label || "สถานที่ที่ไปบ่อย", loc: parseLatLng(p.placeLocation || p) }))
+    .filter((p) => p.loc);
 }
 
-function ymd(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function hm(date) {
-  return date.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
-}
-
-function parseTimeOnDay(dayStr, hhmm) {
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const hm = (d) => d.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+const thaiDate = (key) => new Date(`${key}T00:00:00`).toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const parseTimeOnDay = (day, hhmm) => {
   const [h, m] = hhmm.split(":").map(Number);
-  const d = new Date(`${dayStr}T00:00:00`);
+  const d = new Date(`${day}T00:00:00`);
   d.setHours(h, m, 0, 0);
   return d;
+};
+const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2.getTime(), b2.getTime()) - Math.max(a1.getTime(), b1.getTime()));
+const selectedDays = () => new Set([...document.querySelectorAll("#days input:checked")].map((el) => Number(el.value)));
+
+async function readFile(file) {
+  const data = JSON.parse(await file.text());
+  state.segments = extractSegments(data);
+  $("fileInfo").textContent = `${file.name} · ${state.segments.length.toLocaleString()} ช่วง`;
+  $("detectedPlaces").innerHTML = "";
+  for (const p of extractPlaces(data)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-btn";
+    btn.textContent = p.label;
+    btn.addEventListener("click", () => setWork(p.loc.lat, p.loc.lng));
+    $("detectedPlaces").appendChild(btn);
+  }
 }
 
-function overlapMs(aStart, aEnd, bStart, bEnd) {
-  const start = Math.max(aStart.getTime(), bStart.getTime());
-  const end = Math.min(aEnd.getTime(), bEnd.getTime());
-  return Math.max(0, end - start);
-}
-
-function selectedDays() {
-  return new Set(
-    [...document.querySelectorAll("#days input:checked")].map((el) => Number(el.value))
-  );
-}
+const drop = $("drop");
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) readFile(f).catch(showError); });
+$("file").addEventListener("change", (e) => { if (e.target.files[0]) readFile(e.target.files[0]).catch(showError); });
+function showError(err) { $("error").hidden = false; $("error").textContent = err.message || "อ่านไฟล์ไม่สำเร็จ"; }
 
 function analyze() {
   $("error").hidden = true;
-  if (!state.segments.length) throw new Error("ยังไม่มีข้อมูล Timeline ที่อ่านได้");
+  if (!state.segments.length) throw new Error("ยังไม่มีข้อมูล Timeline");
   const lat = parseFloat($("lat").value);
   const lng = parseFloat($("lng").value);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("กรุณาใส่พิกัดที่ทำงาน หรือปักหมุดบนแผนที่");
-  const radius = Number($("radius").value) || 120;
-  const minHours = Number($("minHours").value) || 0;
-  const workStart = $("workStart").value || "08:00";
-  const workEnd = $("workEnd").value || "18:00";
-  const onlyWorkHours = $("onlyWorkHours").checked;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("กรุณาปักหมุดจุดปั๊ม");
+  const radius = radiusValue();
+  const minHours = Math.max(6, Number($("minHours").value) || 6);
+  $("minHours").value = minHours;
+  const shift = SHIFTS[currentShiftKey()];
   const days = selectedDays();
   const from = $("dateFrom").value;
   const to = $("dateTo").value;
   const work = { lat, lng };
-
   const byDay = new Map();
+
   for (const seg of state.segments) {
     if (haversine(work, seg.loc) > radius) continue;
-    const dayKey = ymd(seg.start);
-    if (from && dayKey < from) continue;
-    if (to && dayKey > to) continue;
+    const key = ymd(seg.start);
+    if (from && key < from) continue;
+    if (to && key > to) continue;
     if (!days.has(seg.start.getDay())) continue;
-    if (!byDay.has(dayKey)) byDay.set(dayKey, []);
-    byDay.get(dayKey).push(seg);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(seg);
   }
-
-  const keys = [...byDay.keys()].sort();
-  // also include empty workdays in range if specified
   if (from && to) {
     const cursor = new Date(`${from}T00:00:00`);
     const end = new Date(`${to}T00:00:00`);
@@ -210,124 +189,170 @@ function analyze() {
     }
   }
 
-  const rows = [...byDay.keys()].sort().map((day) => {
-    const segs = byDay.get(day);
-    let ms = 0;
-    let first = null;
-    let last = null;
-    const winStart = parseTimeOnDay(day, workStart);
-    const winEnd = parseTimeOnDay(day, workEnd);
-    for (const seg of segs) {
-      let s = seg.start;
-      let e = seg.end;
-      if (e < s) continue;
-      if (onlyWorkHours) {
-        ms += overlapMs(s, e, winStart, winEnd);
-        const clippedStart = new Date(Math.max(s.getTime(), winStart.getTime()));
-        const clippedEnd = new Date(Math.min(e.getTime(), winEnd.getTime()));
-        if (clippedEnd > clippedStart) {
-          if (!first || clippedStart < first) first = clippedStart;
-          if (!last || clippedEnd > last) last = clippedEnd;
-        }
-      } else {
-        ms += e.getTime() - s.getTime();
-        if (!first || s < first) first = s;
-        if (!last || e > last) last = e;
-      }
+  state.byDay = byDay;
+  state.results = [...byDay.keys()].sort().map((day) => {
+    let ms = 0, first = null, last = null;
+    const visits = [];
+    const winStart = parseTimeOnDay(day, shift.start);
+    const winEnd = parseTimeOnDay(day, shift.end);
+    for (const seg of byDay.get(day) || []) {
+      const piece = overlap(seg.start, seg.end, winStart, winEnd);
+      if (!piece) continue;
+      ms += piece;
+      const s = new Date(Math.max(seg.start, winStart));
+      const e = new Date(Math.min(seg.end, winEnd));
+      visits.push({ start: s, end: e, hours: piece / 3600000 });
+      if (!first || s < first) first = s;
+      if (!last || e > last) last = e;
     }
     const hours = ms / 3600000;
-    let status = "ไม่พบที่ทำงาน";
-    let cls = "bad";
-    if (hours >= minHours && hours > 0) {
-      status = "ไปทำงาน";
-      cls = "ok";
-    } else if (hours > 0) {
-      status = "ไปไม่ครบเกณฑ์";
-      cls = "warn";
-    }
-    return { day, status, cls, first, last, hours };
+    let status = "ไม่พบที่ปั๊ม", cls = "bad";
+    if (hours >= minHours) { status = "ไปทำงาน"; cls = "ok"; }
+    else if (hours > 0) { status = "ไปไม่ครบ 6 ชม."; cls = "warn"; }
+    return { day, shift: shift.label, status, cls, first, last, hours, visits, minHours };
   });
 
-  state.results = rows;
-  renderResults(rows, minHours);
+  if (state.results.length) {
+    state.month = new Date(`${state.results[0].day}T00:00:00`);
+    state.selected = state.results[0].day;
+  }
+  render();
+  showPane("board");
 }
 
-function renderResults(rows, minHours) {
+function render() {
+  const rows = state.results;
   const ok = rows.filter((r) => r.cls === "ok").length;
   const warn = rows.filter((r) => r.cls === "warn").length;
   const bad = rows.filter((r) => r.cls === "bad").length;
-  $("stats").innerHTML = `
-    <div class="stat"><span>ไปทำงาน</span><b class="ok">${ok}</b></div>
-    <div class="stat"><span>ไปไม่ครบ ${minHours} ชม.</span><b class="warn">${warn}</b></div>
-    <div class="stat"><span>ไม่พบที่ทำงาน</span><b class="bad">${bad}</b></div>
-  `;
-  $("tbody").innerHTML = rows
-    .map(
-      (r) => `<tr>
-        <td>${r.day}</td>
-        <td class="${r.cls}">${r.status}</td>
-        <td>${r.first ? hm(r.first) : "-"}</td>
-        <td>${r.last ? hm(r.last) : "-"}</td>
-        <td>${r.hours ? r.hours.toFixed(2) : "0.00"}</td>
-      </tr>`
-    )
-    .join("");
-  $("results").hidden = false;
+  $("statOk").textContent = ok;
+  $("statWarn").textContent = warn;
+  $("statBad").textContent = bad;
+  $("statRate").textContent = rows.length ? `${Math.round((ok / rows.length) * 100)}%` : "—";
+  $("resultHint").textContent = rows.length
+    ? `${SHIFTS[currentShiftKey()].label} · รัศมี ${radiusValue()} ม. · เกณฑ์ ${$("minHours").value} ชม.`
+    : "กดวันที่เพื่อดูรายละเอียด";
   $("csv").disabled = !rows.length;
+  renderCalendar();
+  renderDetail(state.selected);
 }
 
-function downloadCsv() {
-  const header = ["date", "status", "arrive", "leave", "hours"];
-  const lines = [header.join(",")].concat(
-    state.results.map((r) =>
-      [r.day, r.status, r.first ? hm(r.first) : "", r.last ? hm(r.last) : "", r.hours.toFixed(2)].join(",")
-    )
+function renderCalendar() {
+  $("monthTitle").textContent = state.month.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+  const y = state.month.getFullYear();
+  const m = state.month.getMonth();
+  const startPad = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const mapRows = Object.fromEntries(state.results.map((r) => [r.day, r]));
+  let html = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((d) => `<div class="dow">${d}</div>`).join("");
+  for (let i = 0; i < startPad; i++) html += `<div class="cell empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const row = mapRows[key];
+    const sel = key === state.selected ? " selected" : "";
+    html += `<button type="button" class="cell ${row ? row.cls : "empty"}${sel}" data-day="${key}">
+      <span class="n">${d}</span>${row ? `<span class="h">${row.hours.toFixed(1)} ชม.</span>` : ""}
+    </button>`;
+  }
+  $("calendar").innerHTML = html;
+  $("calendar").querySelectorAll(".cell[data-day]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.selected = el.dataset.day;
+      renderCalendar();
+      renderDetail(el.dataset.day);
+    });
+  });
+}
+
+function renderDetail(day) {
+  const row = state.results.find((r) => r.day === day);
+  if (!day) {
+    $("detailTitle").textContent = "เลือกวันที่บนปฏิทิน";
+    $("detailStatus").textContent = "ยังไม่มีข้อมูล";
+    $("dShift").textContent = $("dIn").textContent = $("dOut").textContent = $("dHours").textContent = "—";
+    $("detailTimeline").innerHTML = "";
+    return;
+  }
+  $("detailTitle").textContent = thaiDate(day);
+  if (!row) {
+    $("detailStatus").textContent = "นอกเงื่อนไขที่ตั้งไว้";
+    $("detailStatus").className = "detail-status";
+    $("dShift").textContent = SHIFTS[currentShiftKey()].label;
+    $("dIn").textContent = $("dOut").textContent = $("dHours").textContent = "—";
+    $("detailTimeline").innerHTML = `<div class="tl"><span>ไม่มีช่วงเวลาในรัศมีปั๊ม</span></div>`;
+    $("detailNote").textContent = "วันนี้ไม่อยู่ในผลลัพธ์ตามกะ รัศมี หรือวันทำงานที่เลือก";
+    return;
+  }
+  $("detailStatus").textContent = row.status;
+  $("detailStatus").className = `detail-status ${row.cls}`;
+  $("dShift").textContent = row.shift;
+  $("dIn").textContent = row.first ? hm(row.first) : "—";
+  $("dOut").textContent = row.last ? hm(row.last) : "—";
+  $("dHours").textContent = `${row.hours.toFixed(2)} ชม.`;
+  $("detailTimeline").innerHTML = row.visits.length
+    ? row.visits.map((v) => `<div class="tl"><span>${hm(v.start)} – ${hm(v.end)}</span><b>${v.hours.toFixed(2)} ชม.</b></div>`).join("")
+    : `<div class="tl"><span>ไม่พบช่วงเวลาในรัศมี</span></div>`;
+  $("detailNote").textContent = row.cls === "ok"
+    ? `อยู่ในรัศมีจุดปั๊มครบเกณฑ์ ${row.minHours} ชั่วโมง จึงนับว่าไปทำงาน`
+    : row.cls === "warn"
+      ? `มีสัญญาณที่ปั๊ม แต่รวมแล้วไม่ถึง ${row.minHours} ชั่วโมง`
+      : "ไม่พบพิกัดในรัศมีจุดปั๊มระหว่างช่วงกะนี้";
+}
+
+$("run").addEventListener("click", () => { try { analyze(); } catch (e) { showError(e); } });
+$("csv").addEventListener("click", () => {
+  const lines = ["date,shift,status,arrive,leave,hours"].concat(
+    state.results.map((r) => [r.day, r.shift, r.status, r.first ? hm(r.first) : "", r.last ? hm(r.last) : "", r.hours.toFixed(2)].join(","))
   );
-  const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8;" }));
   a.download = "work-attendance.csv";
   a.click();
+});
+$("prevMonth").addEventListener("click", () => { state.month.setMonth(state.month.getMonth() - 1); renderCalendar(); });
+$("nextMonth").addEventListener("click", () => { state.month.setMonth(state.month.getMonth() + 1); renderCalendar(); });
+
+$("searchBtn").addEventListener("click", async () => {
+  const q = $("search").value.trim();
+  if (!q) return;
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+  if (!data[0]) return showError(new Error("ไม่พบสถานที่"));
+  setWork(+data[0].lat, +data[0].lon);
+});
+
+function showPane(name) {
+  document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("show", p.id === `pane-${name}`));
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("on", b.dataset.pane === name));
+  if (name === "setup") setTimeout(() => map.invalidateSize(), 200);
 }
+document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => showPane(btn.dataset.pane)));
+showPane("setup");
 
-$("file").addEventListener("change", async (ev) => {
-  const file = ev.target.files[0];
-  $("error").hidden = true;
-  if (!file) return;
-  $("fileLabel").textContent = file.name;
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    state.raw = data;
-    state.segments = extractSegments(data);
-    $("fileInfo").textContent = `อ่านได้ ${state.segments.length.toLocaleString()} ช่วงเวลาจากไฟล์`;
-    const places = extractFrequentPlaces(data);
-    $("detectedPlaces").innerHTML = "";
-    for (const p of places) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = `ใช้ ${p.label}`;
-      btn.addEventListener("click", () => setWork(p.loc.lat, p.loc.lng));
-      $("detectedPlaces").appendChild(btn);
-      if (String(p.label).toUpperCase() === "WORK" && !$("lat").value) setWork(p.loc.lat, p.loc.lng);
+const fields = ["lat", "lng", "radius", "minHours", "dateFrom", "dateTo"];
+$("save").addEventListener("click", () => {
+  const payload = Object.fromEntries(fields.map((id) => [id, $(id).value]));
+  payload.days = [...document.querySelectorAll("#days input")].map((el) => el.checked);
+  payload.shift = currentShiftKey();
+  localStorage.setItem("workpulse-gas", JSON.stringify(payload));
+  $("resultHint").textContent = "บันทึกค่าตั้งแล้ว";
+});
+try {
+  const raw = JSON.parse(localStorage.getItem("workpulse-gas") || "null");
+  if (raw) {
+    fields.forEach((id) => { if (raw[id] != null) $(id).value = raw[id]; });
+    document.querySelectorAll("#days input").forEach((el, i) => { if (raw.days) el.checked = raw.days[i]; });
+    if (raw.shift) {
+      const el = document.querySelector(`input[name=shift][value="${raw.shift}"]`);
+      if (el) el.checked = true;
     }
-  } catch (err) {
-    $("fileInfo").textContent = "อ่านไฟล์ไม่สำเร็จ";
-    $("error").hidden = false;
-    $("error").textContent = "ไฟล์ JSON ไม่ถูกต้อง หรือไม่ใช่รูปแบบ Timeline";
+    $("radiusLabel").textContent = `${radiusValue()} ม.`;
+    if (raw.lat && raw.lng) setWork(+raw.lat, +raw.lng, false);
   }
-});
+} catch {}
 
-$("run").addEventListener("click", () => {
-  try {
-    analyze();
-  } catch (err) {
-    $("error").hidden = false;
-    $("error").textContent = err.message;
-  }
-});
-
-$("csv").addEventListener("click", downloadCsv);
-
-setTimeout(() => map.invalidateSize(), 300);
+$("helpBtn").addEventListener("click", () => { $("helpModal").hidden = false; });
+$("closeHelp").addEventListener("click", () => { $("helpModal").hidden = true; });
+$("helpModal").addEventListener("click", (e) => { if (e.target.id === "helpModal") $("helpModal").hidden = true; });
+setTimeout(() => map.invalidateSize(), 250);
 window.addEventListener("resize", () => map.invalidateSize());
